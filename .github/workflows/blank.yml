@@ -29,4 +29,11 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
           TZ: Asia/Taipei
-        run: python market_env_report.py
+        run: |
+          python - << 'PY'
+          import importlib.util, sys
+          spec = importlib.util.spec_from_file_location("market_env_report", "market_env_report.py")
+          m = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(m)
+          m.run_once_and_send()  # 單次執行，做完即退出
+          PY
