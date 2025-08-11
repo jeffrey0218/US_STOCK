@@ -24,7 +24,7 @@ RECIPIENT = "jeffrey0218@gmail.com"            # 收件者
 SENDER = os.getenv("EMAIL_USER", "jeffrey0218@gmail.com")           # 寄件者（建議 Gmail）
 APP_PASS = os.getenv("EMAIL_PASSWORD", "lprw gbrd jqmd tdqp")     # App Password（請使用 2FA 後的應用程式密碼）
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 SEND_TIME = os.getenv("SEND_TIME", "17:00")    # 每日寄送時間（本機時間）
 
 # 圖表輸出檔
@@ -286,3 +286,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
