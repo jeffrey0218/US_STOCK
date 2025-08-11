@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 import yfinance as yf
 
 # ========== 基本設定 ==========
-RECIPIENT = "jeffrey0218@gmail.com;jeffrey@gis.tw"            # 收件者
+RECIPIENT = "jeffrey@gis.tw"            # 收件者
 SENDER ="jeffrey0218@gmail.com"
 APP_PASS= "lprw gbrd jqmd tdqp"
 SMTP_SERVER = "smtp.gmail.com"
@@ -292,5 +292,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
