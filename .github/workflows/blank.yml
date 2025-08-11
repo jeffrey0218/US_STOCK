@@ -1,17 +1,77 @@
-name: Scheduled Task
+name: Daily Market Environment Report
+
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天午夜 (UTC) 執行
-  workflow_dispatch:       # 手動觸發（方便測試）
+    - cron: '0 1 * * *'   # 每日 01:00 UTC 執行（約為台北 09:00）
+  workflow_dispatch:        # 允許手動觸發，便於測試
+
+concurrency:
+  group: daily-market-env
+  cancel-in-progress: true
+
 jobs:
-  run_script:
+  run-report:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
-      - name: Run script
-        run: python market_env_report.py  # 替換成你的腳本名稱
+          python-version: '3.11'
+          cache: 'pip'   # 加速 pip 快取（選用）
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            # 若您未提供 requirements.txt，則安裝必要套件
+            pip install yfinance pandas numpy matplotlib schedule requests python-dateutil
+
+      - name: Run report once (import and call run_once_and_send)
+        env:
+          # 建議於 Repo Settings → Secrets and variables → Actions 新增以下 Secrets
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          RECIPIENT: ${{ secrets.RECIPIENT }}
+          # 若您的程式需要 SEND_TIME 也可一併提供（本 workflow 採「一次性」呼叫）
+          SEND_TIME: '09:00'
+        shell: bash
+        run: |
+          python - << 'PY'
+          import os, sys, time, importlib.util
+          # 設定台北時區，讓報表日期/時間更貼近您的需求
+          os.environ['TZ'] = 'Asia/Taipei'
+          try:
+              time.tzset()  # 部分系統有效
+          except Exception:
+              pass
+
+          # 嘗試以模組名稱匯入；若不在模組搜尋路徑則以檔案載入
+          try:
+              import market_env_report as m
+          except ModuleNotFoundError:
+              spec = importlib.util.spec_from_file_location("market_env_report", "market_env_report.py")
+              m = importlib.util.module_from_spec(spec)
+              sys.modules["market_env_report"] = m
+              spec.loader.exec_module(m)
+
+          # 直接呼叫一次性函式，避免進入腳本內部的無限排程
+          m.run_once_and_send()
+          PY
+
+      - name: Upload chart artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-environment-chart
+          path: market_environment_trend.png
+          if-no-files-found: warn
