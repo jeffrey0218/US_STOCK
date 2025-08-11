@@ -20,18 +20,16 @@ from datetime import datetime, timedelta
 import yfinance as yf
 
 # ========== 基本設定 ==========
-RECIPIENT = "jeffrey@gis.tw"            # 收件者
-SENDER ="jeffrey0218@gmail.com"
-APP_PASS= "lprw gbrd jqmd tdqp"
+RECIPIENT = os.getenv("EMAIL_RECIPIENT")
+SENDER = os.getenv("EMAIL_USER")
+APP_PASS = os.getenv("EMAIL_PASSWORD")
+
+if not RECIPIENT or not SENDER or not APP_PASS:
+    raise RuntimeError("缺少 Email 設定，請設定 EMAIL_RECIPIENT、EMAIL_USER、EMAIL_PASSWORD 環境變數")
+
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT=587
 SEND_TIME = "17:00"
-
-#SENDER = os.getenv("EMAIL_USER", "jeffrey0218@gmail.com")           # 寄件者（建議 Gmail）
-#APP_PASS = os.getenv("EMAIL_PASSWORD", "lprw gbrd jqmd tdqp")     # App Password（請使用 2FA 後的應用程式密碼）
-#SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-#SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-#SEND_TIME = os.getenv("SEND_TIME", "17:00")    # 每日寄送時間（本機時間）
 
 # 圖表輸出檔
 CHART_PATH = "market_environment_trend.png"
@@ -292,6 +290,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
