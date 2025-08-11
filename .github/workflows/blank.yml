@@ -27,10 +27,6 @@ jobs:
           # 建議在 Repo Settings → Secrets and variables → Actions 設定以下變數
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          RECIPIENT: ${{ secrets.RECIPIENT }}
-          # 若沒設定，以下提供預設，避免空值造成程式中斷
-          SMTP_SERVER: ${{ secrets.SMTP_SERVER || 'smtp.gmail.com' }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT || '587' }}
-          SEND_TIME: '09:00'   # 您的程式若使用到可保留；不使用可刪
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
           TZ: Asia/Taipei
         run: python market_env_report.py
