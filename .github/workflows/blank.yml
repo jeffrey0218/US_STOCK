@@ -2,8 +2,8 @@ name: Daily Market Environment Report
 
 on:
   schedule:
-    - cron: '0 1 * * *'   # 每日 01:00 UTC 執行（約為台北 09:00）
-  workflow_dispatch:        # 允許手動觸發，便於測試
+    - cron: '0 1 * * *'   # 每日 01:00 UTC（台北時間約 09:00）
+  workflow_dispatch:        # 允許手動觸發
 
 concurrency:
   group: daily-market-env
@@ -23,55 +23,116 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'   # 加速 pip 快取（選用）
+          # 不使用 pip 快取，避免無 requirements.txt/pyproject.toml 的錯誤
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            # 若您未提供 requirements.txt，則安裝必要套件
-            pip install yfinance pandas numpy matplotlib schedule requests python-dateutil
+          pip install \
+            yfinance==0.2.40 \
+            pandas==2.2.2 \
+            numpy==1.26.4 \
+            matplotlib==3.8.4 \
+            schedule==1.2.2 \
+            requests==2.32.3 \
+            python-dateutil==2.9.0.post0
 
-      - name: Run report once (import and call run_once_and_send)
+      - name: Generate report (chart + html, email optional)
         env:
-          # 建議於 Repo Settings → Secrets and variables → Actions 新增以下 Secrets
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           RECIPIENT: ${{ secrets.RECIPIENT }}
-          # 若您的程式需要 SEND_TIME 也可一併提供（本 workflow 採「一次性」呼叫）
-          SEND_TIME: '09:00'
         shell: bash
         run: |
           python - << 'PY'
-          import os, sys, time, importlib.util
-          # 設定台北時區，讓報表日期/時間更貼近您的需求
+          import os, sys, time, importlib.util, traceback
           os.environ['TZ'] = 'Asia/Taipei'
           try:
-              time.tzset()  # 部分系統有效
+              time.tzset()
           except Exception:
               pass
 
-          # 嘗試以模組名稱匯入；若不在模組搜尋路徑則以檔案載入
+          # 匯入 market_env_report.py（與 repo 根目錄同層）
           try:
               import market_env_report as m
           except ModuleNotFoundError:
               spec = importlib.util.spec_from_file_location("market_env_report", "market_env_report.py")
+              if spec is None or spec.loader is None:
+                  print("market_env_report.py not found. Please place it at repo root.")
+                  sys.exit(1)
               m = importlib.util.module_from_spec(spec)
               sys.modules["market_env_report"] = m
               spec.loader.exec_module(m)
 
-          # 直接呼叫一次性函式，避免進入腳本內部的無限排程
-          m.run_once_and_send()
+          from datetime import datetime
+          import numpy as np
+
+          # 依原腳本邏輯抓資料（含 fallback）
+          try:
+              fg = m.fetch_fear_greed()
+          except Exception:
+              fg = None
+          if fg is None:
+              fg = 59
+
+          try:
+              vix = m.fetch_vix_last()
+          except Exception:
+              vix = None
+          if vix is None:
+              vix = 15.15
+
+          rsi_vals = []
+          for sym in ["VOO","SPLG","QQQ","VT"]:
+              try:
+                  r = m.fetch_rsi(sym)
+                  if r is not None:
+                      rsi_vals.append(r)
+              except Exception:
+                  pass
+          avg_rsi = float(np.nanmean(rsi_vals)) if rsi_vals else None
+
+          env_tw_en, conf = m.classify_environment(fg, vix, avg_rsi)
+          df = m.build_strategy_table(env_tw_en)
+
+          # 先產圖（即使之後寄信失敗也有產物可上傳）
+          try:
+              m.plot_environment_line(env_tw_en)  # 產出 market_environment_trend.png
+          except Exception as e:
+              print("Failed to generate chart:", e)
+              # 保底：產出一個空白檔避免 artifact 步驟報錯
+              open("market_environment_trend.png", "wb").close()
+
+          # 產出 HTML 報告（內含表格）
+          today = datetime.now().strftime("%Y-%m-%d")
+          try:
+              html = m.render_html(m.build_analysis_block(today, env_tw_en, fg, vix, {}, conf), df)
+              with open("report.html","w", encoding="utf-8") as f:
+                  f.write(html)
+          except Exception as e:
+              print("Failed to generate HTML:", e)
+
+          # 若有信件憑證才寄信；否則略過，不讓 workflow 失敗
+          if os.getenv("EMAIL_USER") and os.getenv("EMAIL_PASSWORD") and os.getenv("RECIPIENT"):
+              try:
+                  m.send_email(f"每日市場環境分析 - {today}｜{env_tw_en[0]}/{env_tw_en[1]}", html, "market_environment_trend.png")
+                  print("Email sent.")
+              except Exception:
+                  print("Email failed, but artifacts were generated:")
+                  traceback.print_exc()
+          else:
+              print("No email credentials provided; skipped sending.")
           PY
 
-      - name: Upload chart artifact
-        if: always()
+      - name: Upload artifacts (chart + html)
+        if: ${{ hashFiles('market_environment_trend.png') != '' || hashFiles('report.html') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: market-environment-chart
-          path: market_environment_trend.png
+          name: market-environment-output
+          path: |
+            market_environment_trend.png
+            report.html
+          retention-days: 14
           if-no-files-found: warn
