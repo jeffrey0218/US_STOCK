@@ -20,9 +20,9 @@ from datetime import datetime, timedelta
 import yfinance as yf
 
 # ========== 基本設定 ==========
-RECIPIENT = os.getenv("EMAIL_RECIPIENT")
-SENDER = os.getenv("EMAIL_USER")
-APP_PASS = os.getenv("EMAIL_PASSWORD")
+RECIPIENT = os.getenv("EMAIL_RECIPIENT","jeffrey@gis.tw")
+SENDER = os.getenv("EMAIL_USER","jeffrey0218@gmail.com")
+APP_PASS = os.getenv("EMAIL_PASSWORD","lprw gbrd jqmd tdqp")
 
 if not RECIPIENT or not SENDER or not APP_PASS:
     raise RuntimeError("缺少 Email 設定，請設定 EMAIL_RECIPIENT、EMAIL_USER、EMAIL_PASSWORD 環境變數")
@@ -33,39 +33,69 @@ SEND_TIME = "17:00"
 
 # 圖表輸出檔
 CHART_PATH = "market_environment_trend.png"
+FGI_CACHE_PATH = "fear_greed_cache.json"
 
 # ========== 工具函式 ==========
+def _save_fgi_cache(val: int):
+    try:
+        with open(FGI_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump({"value": int(val), "ts": datetime.now().isoformat()}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+def _load_fgi_cache():
+    try:
+        if os.path.exists(FGI_CACHE_PATH):
+            with open(FGI_CACHE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return int(data.get("value"))
+    except Exception:
+        return None
+    return None
+
 def fetch_fear_greed():
     """
-    嘗試從 CNN 的資料端點/頁面取得 Fear & Greed（非官方）。
-    取得失敗時回傳 None，由上層決策 fallback。
+    嘗試從 CNN 的資料端點/頁面取得 Fear & Greed。
+    解析失敗 → 回傳 None；呼叫端自行決策（快取/環境變數）。
     """
     urls = [
         "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
-        "https://production.dataviz.cnn.io/index/fearandgreed/graphdata/one"  # 備援
+        "https://production.dataviz.cnn.io/index/fearandgreed/graphdata/one"
     ]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
     for url in urls:
         try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                # 嘗試多種可能的欄位
-                candidates = [
-                    ("fear_and_greed", "score"),
-                    ("feargreed", "now"),
-                    ("now", None)
-                ]
-                for top, sub in candidates:
-                    if top in data and isinstance(data[top], dict) and sub in data[top]:
-                        return int(data[top][sub])
-                    if sub is None and top in data and isinstance(data[top], (int, float)):
-                        return int(data[top])
-                # 也可能出現在 data['score']
-                if "score" in data and isinstance(data["score"], (int, float)):
-                    return int(data["score"])
+            r = requests.get(url, timeout=12, headers=headers)
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            # 常見結構：
+            # {"fear_and_greed": {"score": 63.57, "previous_close": 63.14, ...}, "fear_and_greed_historical": {...}}
+            val = None
+            fa = data.get("fear_and_greed") or data.get("feargreed")
+            if isinstance(fa, dict):
+                if "score" in fa and isinstance(fa["score"], (int, float)):
+                    val = float(fa["score"])
+                elif "previous_close" in fa and isinstance(fa["previous_close"], (int, float)):
+                    val = float(fa["previous_close"])
+            # 後備：歷史序列最後一筆
+            if val is None:
+                hist = data.get("fear_and_greed_historical", {}) or {}
+                d = hist.get("data")
+                if isinstance(d, list) and d:
+                    last = d[-1]
+                    y = last.get("y")
+                    if isinstance(y, (int, float)):
+                        val = float(y)
+            if val is not None:
+                val_int = int(round(val))  # 四捨五入成整數
+                _save_fgi_cache(val_int)
+                return val_int
         except Exception:
             continue
-    return None  # 交由呼叫端處理
+    return None  # 讓上層處理快取/覆蓋
 
 def fetch_vix_last():
     try:
@@ -247,8 +277,15 @@ def run_once_and_send():
     today = datetime.now().strftime("%Y-%m-%d")
     fg = fetch_fear_greed()
     if fg is None:
-        # 取不到時以保守值處理（建議您改用自有資料源或第三方API）
-        fg = 59  # fallback
+        # 優先用快取；再看是否有覆蓋；最後仍為 None
+        fg = _load_fgi_cache()
+        if fg is None:
+            fallback_str = os.getenv("FGI_FALLBACK", "").strip()
+            try:
+                if fallback_str:
+                    fg = int(float(fallback_str))
+            except Exception:
+                fg = None
 
     vix = fetch_vix_last()
     if vix is None:
@@ -290,7 +327,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
