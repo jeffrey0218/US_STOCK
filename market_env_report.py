@@ -10,7 +10,6 @@ import requests
 import schedule
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
@@ -31,8 +30,7 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT=587
 SEND_TIME = "17:00"
 
-# 圖表輸出檔
-CHART_PATH = "market_environment_trend.png"
+# 快取檔案
 FGI_CACHE_PATH = "fear_greed_cache.json"
 
 # ========== 工具函式 ==========
@@ -137,6 +135,67 @@ def classify_environment(fg, vix, avg_rsi):
     # 其他情形歸為中性
     return ("中性市場", "Neutral"), 0.7
 
+def fetch_sp500_earnings_calls():
+    """
+    抓取 S&P 500 成分股未來兩周的財報會議（earnings call）
+    使用 yfinance 的 calendar 屬性
+    """
+    earnings_list = []
+    try:
+        # 使用常見的大型 S&P 500 成分股列表
+        major_sp500_stocks = [
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK.B', 'UNH', 'JNJ',
+            'V', 'XOM', 'WMT', 'JPM', 'LLY', 'MA', 'PG', 'AVGO', 'HD', 'CVX',
+            'MRK', 'ABBV', 'KO', 'COST', 'PEP', 'ADBE', 'TMO', 'BAC', 'CSCO', 'ACN',
+            'MCD', 'NFLX', 'ABT', 'LIN', 'NKE', 'CRM', 'DIS', 'DHR', 'VZ', 'WFC',
+            'PM', 'CMCSA', 'AMD', 'TXN', 'NEE', 'INTC', 'ORCL', 'COP', 'RTX', 'UPS',
+            'QCOM', 'SPGI', 'HON', 'UNP', 'IBM', 'INTU', 'GE', 'AMAT', 'LOW', 'CAT',
+            'BA', 'SBUX', 'ELV', 'DE', 'GS', 'BLK', 'PLD', 'MS', 'MDLZ', 'AXP',
+            'AMGN', 'BKNG', 'ISRG', 'ADI', 'TJX', 'GILD', 'SYK', 'ADP', 'PFE', 'MMC',
+            'CI', 'VRTX', 'C', 'REGN', 'SO', 'ZTS', 'CB', 'DUK', 'NOW', 'PGR',
+            'BSX', 'TMUS', 'BDX', 'SCHW', 'MO', 'ETN', 'EOG', 'USB', 'LRCX', 'PANW'
+        ]
+        
+        # 計算未來兩周日期範圍（今天到未來 14 天）
+        today = datetime.now().date()
+        two_weeks_later = today + timedelta(days=14)
+        
+        print(f"正在查詢 {len(major_sp500_stocks)} 支 S&P 500 主要成分股的財報會議...")
+        
+        for symbol in major_sp500_stocks:
+            try:
+                ticker = yf.Ticker(symbol)
+                calendar = ticker.calendar
+                
+                # calendar 是字典，Earnings Date 是列表
+                if isinstance(calendar, dict) and 'Earnings Date' in calendar:
+                    earnings_dates = calendar['Earnings Date']
+                    if not isinstance(earnings_dates, list):
+                        earnings_dates = [earnings_dates]
+                    
+                    for earnings_date in earnings_dates:
+                        if isinstance(earnings_date, (pd.Timestamp, datetime)):
+                            earnings_date = earnings_date.date() if hasattr(earnings_date, 'date') else earnings_date
+                        
+                        if isinstance(earnings_date, type(today)) and today <= earnings_date <= two_weeks_later:
+                            company_name = ticker.info.get('longName', symbol)
+                            earnings_list.append({
+                                'symbol': symbol,
+                                'company': company_name,
+                                'date': earnings_date.strftime('%Y-%m-%d')
+                            })
+                            break  # 只取第一個符合的日期
+            except Exception:
+                continue
+                
+        # 依日期排序
+        earnings_list.sort(key=lambda x: x['date'])
+        
+    except Exception as e:
+        print(f"Error fetching earnings calls: {e}")
+    
+    return earnings_list
+
 def build_strategy_table(current_env_tw_en):
     tw, en = current_env_tw_en
     rows = [
@@ -154,57 +213,28 @@ def build_strategy_table(current_env_tw_en):
     df.loc[df["市場環境"] == "極度貪婪", "目前市場環境"] = f"✅（{tw} / {en}）" if tw == "極度貪婪" else df.loc[df["市場環境"] == "極度貪婪","目前市場環境"]
     return df
 
-def plot_environment_line(current_env_tw_en):
-    # 產生過去30天＋未來30天（簡易均值回歸預測）
-    today = datetime.now()
-    hist_dates = pd.date_range(today - timedelta(days=30), today, freq="D")
-    futu_dates = pd.date_range(today + timedelta(days=1), today + timedelta(days=30), freq="D")
-
-    # 數值區間 1~5 對應環境層級（英文）
-    def rnd(seed, n, mu_line_from, mu_line_to, sigma):
-        np.random.seed(seed)
-        base = np.linspace(mu_line_from, mu_line_to, n)
-        noise = np.random.normal(0, sigma, n)
-        return np.clip(base + noise, 1, 5)
-
-    hist_vals = rnd(42, len(hist_dates), 2.8, 3.0, 0.30)  # 向中性靠攏
-    futu_vals = rnd(84, len(futu_dates), 3.0, 2.9, 0.40)  # 略偏謹慎
-
-    fig, ax = plt.subplots(figsize=(10.5, 5.5))
-    ax.plot(hist_dates, hist_vals, "b-", lw=2, label="Historical (Past 30 Days)")
-    ax.plot(futu_dates, futu_vals, "r--", lw=2, label="Prediction (Next 30 Days)")
-
-    ax.set_ylim(1, 5)
-    ax.set_yticks([1,2,3,4,5])
-    ax.set_yticklabels(["Extreme\nPanic","Moderate\nPanic","Neutral","Moderate\nGreed","Extreme\nGreed"])
-    for y in [1.5,2.5,3.5,4.5]:
-        ax.axhline(y, color="gray", ls=":", alpha=0.4)
-    ax.axhspan(1, 2.5, color="#ffcccc", alpha=0.2)
-    ax.axhspan(2.5, 3.5, color="#fff2b2", alpha=0.2)
-    ax.axhspan(3.5, 5.0, color="#ccffcc", alpha=0.2)
-
-    ax.axvline(today, color="black", lw=1)
-    tw, en = current_env_tw_en
-    ax.plot([today],[3.0], "go", ms=8, label=f"Current: {en}")
-
-    ax.set_title("Market Environment Trend (Past 30 Days + Next 30 Days)", fontsize=13, weight="bold")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Market Environment")
-    ax.legend(loc="upper right")
-    plt.tight_layout()
-    plt.savefig(CHART_PATH, dpi=200)
-    plt.close()
-
-def render_html(analysis_text, strategy_df):
-    # 產生簡單 HTML（嵌入表格；圖以附件形式寄出）
+def render_html(analysis_text, strategy_df, earnings_list):
+    # 產生簡單 HTML（嵌入表格與財報會議列表）
     table_html = strategy_df.to_html(index=False, escape=False)
+    
+    # 建立財報會議列表 HTML
+    earnings_html = ""
+    if earnings_list:
+        earnings_html = "<h2>📅 未來兩周 S&P 500 財報會議（Earnings Calls）</h2>"
+        earnings_html += "<table><tr><th>日期</th><th>股票代號</th><th>公司名稱</th></tr>"
+        for item in earnings_list:
+            earnings_html += f"<tr><td>{item['date']}</td><td>{item['symbol']}</td><td>{item['company']}</td></tr>"
+        earnings_html += "</table>"
+    else:
+        earnings_html = "<h2>📅 未來兩周 S&P 500 財報會議</h2><p>目前無財報會議資訊</p>"
+    
     html = f"""
     <html><head><meta charset="utf-8">
     <style>
       body {{ font-family: Arial, sans-serif; color:#333; }}
       h1 {{ background:#222;color:#fff;padding:10px 14px;border-radius:8px; }}
       .note {{ font-size:12px;color:#777; }}
-      table {{ border-collapse: collapse; width: 100%; }}
+      table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
       th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 13px; }}
       th {{ background: #f5f5f5; }}
     </style>
@@ -214,13 +244,12 @@ def render_html(analysis_text, strategy_df):
       <pre style="white-space: pre-wrap; font-family: inherit;">{analysis_text}</pre>
       <h2>投資策略對照表</h2>
       {table_html}
-      <h2>市場環境趨勢圖（英文字）</h2>
-      <p class="note">圖檔已作為附件附上（Past 30 days + Next 30 days prediction）。</p>
+      {earnings_html}
     </body></html>
     """
     return html
 
-def send_email(subject, html_body, image_path):
+def send_email(subject, html_body):
     if not SENDER or not APP_PASS:
         raise RuntimeError("請以環境變數 EMAIL_USER / EMAIL_PASSWORD 設定寄件者與密碼（建議 Gmail App Password）。")
 
@@ -233,12 +262,6 @@ def send_email(subject, html_body, image_path):
     alt.attach(MIMEText("您的郵件用戶端不支援 HTML，請切換至 HTML 檢視。", "plain", "utf-8"))
     alt.attach(MIMEText(html_body, "html", "utf-8"))
     msg.attach(alt)
-
-    if os.path.exists(image_path):
-        with open(image_path, "rb") as f:
-            img = MIMEImage(f.read())
-            img.add_header("Content-Disposition", 'attachment; filename="market_environment_trend.png"')
-            msg.attach(img)
 
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
         server.starttls()
@@ -305,15 +328,19 @@ def run_once_and_send():
     # 2) 環境分類
     env_tw_en, conf = classify_environment(fg, vix, avg_rsi)
 
-    # 3) 產表與產圖
-    df = build_strategy_table(env_tw_en)
-    plot_environment_line(env_tw_en)
+    # 3) 抓取財報會議資訊
+    print("正在抓取 S&P 500 財報會議資訊...")
+    earnings_list = fetch_sp500_earnings_calls()
+    print(f"找到 {len(earnings_list)} 筆財報會議")
 
-    # 4) 產出 HTML 內容與寄出
+    # 4) 產表
+    df = build_strategy_table(env_tw_en)
+
+    # 5) 產出 HTML 內容與寄出
     analysis = build_analysis_block(today, env_tw_en, fg, vix, rsi, conf)
-    html = render_html(analysis, df)
+    html = render_html(analysis, df, earnings_list)
     subject = f"每日市場環境分析 - {today}｜{env_tw_en[0]}/{env_tw_en[1]}"
-    send_email(subject, html, CHART_PATH)
+    send_email(subject, html)
 
 def main():
     # 立即跑一次
