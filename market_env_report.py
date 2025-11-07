@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 import yfinance as yf
 
 # ========== 基本設定 ==========
-RECIPIENT = os.getenv("EMAIL_RECIPIENT","jeffrey@gis.tw")
+RECIPIENT = os.getenv("EMAIL_RECIPIENT","jeffrey@gis.tw,gary@gis.tw")
 SENDER = os.getenv("EMAIL_USER","jeffrey0218@gmail.com")
 APP_PASS = os.getenv("EMAIL_PASSWORD","lprw gbrd jqmd tdqp")
 
