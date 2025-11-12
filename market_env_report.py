@@ -266,7 +266,9 @@ def send_email(subject, html_body):
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
         server.starttls()
         server.login(SENDER, APP_PASS)
-        server.send_message(msg)
+        # 將收件者字串分割成列表
+        recipients = [email.strip() for email in RECIPIENT.split(",")]
+        server.send_message(msg, to_addrs=recipients)
 
 def build_analysis_block(date_str, env_tw_en, fg, vix, rsi_dict, conf):
     tw, en = env_tw_en
